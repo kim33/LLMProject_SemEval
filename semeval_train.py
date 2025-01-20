@@ -5,29 +5,13 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import random
 import os
 import torch
-
-# Function to set the seed for reproducibility
-def set_seed(seed_value=42):
-    """Set seed for reproducibility."""
-    np.random.seed(seed_value)
-    torch.manual_seed(seed_value)
-    torch.cuda.manual_seed(seed_value)
-    torch.cuda.manual_seed_all(seed_value)  # if you are using multi-GPU.
-    random.seed(seed_value)
-    os.environ['PYTHONHASHSEED'] = str(seed_value)
-
-    # The below two lines are for deterministic algorithm behavior in CUDA
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-# Set the seed
-set_seed()
+import shutil
 
 # Load your dataset
 train_dataset = load_dataset("csv", data_files={"train" : "./dataset/eng_train.csv"})
 test_dataset = load_dataset("csv", data_files={"test" : "./dataset/eng_test.csv"})
 
-
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5, from_flax=False)
 # Initialize the tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
@@ -74,42 +58,49 @@ tokenized_train_dataset = tokenized_train_dataset.map(process_labels, batched=Fa
 tokenized_test_dataset = tokenized_test_dataset.map(process_labels, batched=False)
 
 # Data collator for padding
-data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True)
 
 # Load the pre-trained BERT model for multi-label classification
-model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5)
 
 # Training arguments
 training_args = TrainingArguments(
     output_dir='./results-bert-topic-cls',
-    num_train_epochs=30,
-    per_device_train_batch_size=10,
-    per_device_eval_batch_size=5,
+    num_train_epochs=35,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=32,
+    learning_rate=5e-7,
     warmup_steps=100,
-    weight_decay=0.02,
-    logging_dir='./logs',
-    evaluation_strategy='epoch',  # Evaluate at the end of each epoch
-    logging_steps=10,
-    report_to="tensorboard",
+    weight_decay=0.05,
+    evaluation_strategy='epoch',
+    logging_strategy='epoch',
+    lr_scheduler_type='constant'
 )
 
-# Compute metrics function for evaluation
+# Compute metrics function for multi-label classification
 def compute_metrics(p):
     predictions, labels = p
     
-    predictions = np.argmax(predictions, axis=1)  # Get the index of the highest logit (class)
+    # Apply sigmoid to the predictions for multi-label classification
+    predictions = torch.sigmoid(torch.tensor(predictions)) > 0.5  # Threshold at 0.5 to predict binary labels
     
-    precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='weighted')
+    # Flatten predictions and labels to calculate metrics across all labels
+    predictions = predictions.numpy().flatten()
+    labels = labels.flatten()
+    
+    # Compute precision, recall, f1, and accuracy
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='macro', zero_division=0)
     acc = accuracy_score(labels, predictions)
+    
     return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
-# Trainer initialization
+
+# Trainer initialization with the new compute_metrics
 trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=tokenized_train_dataset,
     eval_dataset=tokenized_test_dataset,
     data_collator=data_collator,
-    compute_metrics=compute_metrics,
+    compute_metrics=compute_metrics
 )
 
 # Train the model
@@ -153,36 +144,3 @@ plt.xlabel('Predicted labels')
 plt.ylabel('True labels')
 plt.title('Confusion Matrix with Label Names')
 plt.show()
-
-
-import torch
-
-dev_dataset = load_dataset("csv", data_files={"dev" : "./dataset/eng_dev.csv"})
-
-# Example sentence
-sentence = "I was very shocked."
-
-# Tokenize the sentence
-inputs = tokenizer(sentence, padding=True, truncation=True, max_length=512, return_tensors="pt")
-
-# Move inputs to the same device as the model
-inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
-# Make prediction using softmax
-model.eval()  # Set the model to evaluation mode
-with torch.no_grad():
-    outputs = model(**inputs)
-    logits = outputs.logits  # Get the logits from the model output
-
-# Apply softmax to get class probabilities (optional, for understanding)
-probs = torch.softmax(logits, dim=-1)
-
-# Get the predicted class (index with highest probability)
-predicted_class = torch.argmax(probs, dim=-1).item()
-
-# Map the prediction index to the class name (if you have a label map)
-label_map = {0: "anger", 1: "fear", 2: "joy", 3: "sadness", 4: "surprise"}
-predicted_label = label_map[predicted_class]
-
-print(f"Sentence: '{sentence}'")
-print(f"Predicted Label: '{predicted_label}'")
