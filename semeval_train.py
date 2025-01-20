@@ -26,7 +26,6 @@ set_seed()
 # Load your dataset
 train_dataset = load_dataset("csv", data_files={"train" : "./dataset/eng_train.csv"})
 test_dataset = load_dataset("csv", data_files={"test" : "./dataset/eng_test.csv"})
-dev_dataset = load_dataset("csv", data_files={"dev" : "./dataset/eng_dev.csv"})
 
 
 # Initialize the tokenizer
@@ -54,11 +53,11 @@ def process_labels(examples):
             value = examples[label]
             
             # Ensure the value is a single number (0 or 1)
-            if isinstance(value, (int, float)):
+            # check if it's a list of values, or a single value
+            if isinstance(value, list) :
+                label_vector.append(1 if label in value else 0)
+            elif isinstance(value, (int, float)):
                 label_vector.append(float(value))  # Convert to 0 or 1
-            elif isinstance(value, list) and len(value) == 1:
-                # If the value is a list with a single element, use it
-                label_vector.append(float(value[0]))
             else:
                 # Handle unexpected types by defaulting to 0 (no emotion)
                 label_vector.append(float(0))
@@ -78,16 +77,16 @@ tokenized_test_dataset = tokenized_test_dataset.map(process_labels, batched=Fals
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 # Load the pre-trained BERT model for multi-label classification
-model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5, problem_type="multi_label_classification")
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5)
 
 # Training arguments
 training_args = TrainingArguments(
     output_dir='./results-bert-topic-cls',
-    num_train_epochs=3,
-    per_device_train_batch_size=12,
-    per_device_eval_batch_size=6,
+    num_train_epochs=30,
+    per_device_train_batch_size=10,
+    per_device_eval_batch_size=5,
     warmup_steps=100,
-    weight_decay=0.01,
+    weight_decay=0.02,
     logging_dir='./logs',
     evaluation_strategy='epoch',  # Evaluate at the end of each epoch
     logging_steps=10,
@@ -98,17 +97,10 @@ training_args = TrainingArguments(
 def compute_metrics(p):
     predictions, labels = p
     
-    # Convert predictions from logits to probabilities (sigmoid) for multi-label classification
-    predictions = torch.sigmoid(torch.tensor(predictions))  # Apply sigmoid activation
+    predictions = np.argmax(predictions, axis=1)  # Get the index of the highest logit (class)
     
-    # Convert to binary (0 or 1) predictions
-    predictions = predictions > 0.5  # Convert probabilities to binary labels (0 or 1)
-    
-    # Cast labels to Long type if necessary (e.g., for classification tasks)
-    labels = torch.tensor(labels, dtype=torch.long)  # Ensure labels are of type Long
-    
-    precision, recall, f1, _ = precision_recall_fscore_support(labels.numpy(), predictions.numpy(), average='weighted', zero_division=0)
-    acc = accuracy_score(labels.numpy(), predictions.numpy())
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='weighted')
+    acc = accuracy_score(labels, predictions)
     return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
 # Trainer initialization
 trainer = Trainer(
@@ -165,6 +157,8 @@ plt.show()
 
 import torch
 
+dev_dataset = load_dataset("csv", data_files={"dev" : "./dataset/eng_dev.csv"})
+
 # Example sentence
 sentence = "I was very shocked."
 
@@ -174,15 +168,21 @@ inputs = tokenizer(sentence, padding=True, truncation=True, max_length=512, retu
 # Move inputs to the same device as the model
 inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
-# Make prediction
+# Make prediction using softmax
 model.eval()  # Set the model to evaluation mode
 with torch.no_grad():
     outputs = model(**inputs)
-    predictions = outputs.logits.argmax(-1).item()  # Get the predicted class (index)
+    logits = outputs.logits  # Get the logits from the model output
+
+# Apply softmax to get class probabilities (optional, for understanding)
+probs = torch.softmax(logits, dim=-1)
+
+# Get the predicted class (index with highest probability)
+predicted_class = torch.argmax(probs, dim=-1).item()
 
 # Map the prediction index to the class name (if you have a label map)
-simple_label_map = {0: "anger", 1: "fear", 2: "joy", 3: "sadness", 4: "surprise"}
-predicted_label = simple_label_map[predictions]
+label_map = {0: "anger", 1: "fear", 2: "joy", 3: "sadness", 4: "surprise"}
+predicted_label = label_map[predicted_class]
 
 print(f"Sentence: '{sentence}'")
 print(f"Predicted Label: '{predicted_label}'")
