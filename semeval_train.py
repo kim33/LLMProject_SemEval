@@ -28,6 +28,7 @@ train_dataset = load_dataset("csv", data_files={"train" : "./dataset/eng_train.c
 test_dataset = load_dataset("csv", data_files={"test" : "./dataset/eng_test.csv"})
 dev_dataset = load_dataset("csv", data_files={"dev" : "./dataset/eng_dev.csv"})
 
+
 # Initialize the tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
@@ -83,9 +84,9 @@ model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_l
 training_args = TrainingArguments(
     output_dir='./results-bert-topic-cls',
     num_train_epochs=3,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=8,
-    warmup_steps=500,
+    per_device_train_batch_size=12,
+    per_device_eval_batch_size=6,
+    warmup_steps=100,
     weight_decay=0.01,
     logging_dir='./logs',
     evaluation_strategy='epoch',  # Evaluate at the end of each epoch
@@ -160,3 +161,28 @@ plt.xlabel('Predicted labels')
 plt.ylabel('True labels')
 plt.title('Confusion Matrix with Label Names')
 plt.show()
+
+
+import torch
+
+# Example sentence
+sentence = "I was very shocked."
+
+# Tokenize the sentence
+inputs = tokenizer(sentence, padding=True, truncation=True, max_length=512, return_tensors="pt")
+
+# Move inputs to the same device as the model
+inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
+# Make prediction
+model.eval()  # Set the model to evaluation mode
+with torch.no_grad():
+    outputs = model(**inputs)
+    predictions = outputs.logits.argmax(-1).item()  # Get the predicted class (index)
+
+# Map the prediction index to the class name (if you have a label map)
+simple_label_map = {0: "anger", 1: "fear", 2: "joy", 3: "sadness", 4: "surprise"}
+predicted_label = simple_label_map[predictions]
+
+print(f"Sentence: '{sentence}'")
+print(f"Predicted Label: '{predicted_label}'")
