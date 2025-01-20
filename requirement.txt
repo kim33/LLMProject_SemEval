@@ -1,0 +1,8 @@
+seaborn
+wandb
+datasets
+transformers
+accelerate
+shortuuid
+accelerate
+tensorboard
