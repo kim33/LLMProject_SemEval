@@ -1,31 +1,61 @@
 from datasets import load_dataset
-from transformers import BertTokenizer, BertForSequenceClassification, Trainer, TrainingArguments, DataCollatorWithPadding
+from transformers import XLMRobertaForSequenceClassification, XLMRobertaTokenizer, Trainer, TrainingArguments, DataCollatorWithPadding
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import random
 import os
 import torch
-import shutil
 
-# Load your dataset
-train_dataset = load_dataset("csv", data_files={"train" : "./dataset/eng_train.csv"})
-test_dataset = load_dataset("csv", data_files={"test" : "./dataset/eng_test.csv"})
+def set_seed(seed_value=42):
+    """Set seed for reproducibility."""
+    np.random.seed(seed_value)
+    torch.manual_seed(seed_value)
+    torch.cuda.manual_seed(seed_value)
+    torch.cuda.manual_seed_all(seed_value)  # if you are using multi-GPU.
+    random.seed(seed_value)
+    os.environ['PYTHONHASHSEED'] = str(seed_value)
+    # The below two lines are for deterministic algorithm behavior in CUDA
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+# Set the seed
+set_seed()
 
-model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=5, from_flax=False)
+from datasets import load_dataset
+
+# Load your dataset (single file for train/test)
+dataset = load_dataset("csv", data_files={"data": "./dataset/eng_train.csv"})
+
+# Split the dataset into train (80%) and test (20%)
+split_datasets = dataset["data"].train_test_split(test_size=0.2, seed=42)
+
+# Extract the train and test datasets
+train_dataset = split_datasets["train"]
+test_dataset = split_datasets["test"]
+
+model = XLMRobertaForSequenceClassification.from_pretrained(
+    'xlm-roberta-large', 
+    num_labels=5, 
+    from_flax=False, 
+    problem_type="multi_label_classification", 
+    hidden_dropout_prob=0.2
+)
+
 # Initialize the tokenizer
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+tokenizer = XLMRobertaTokenizer.from_pretrained('xlm-roberta-large')
 
 # Tokenization function with labels included
 def tokenize_function(examples):
     return tokenizer(examples['text'], padding=True, truncation=True, max_length=512)
 
-# Tokenizing the datasets
-tokenized_train_dataset = train_dataset['train'].map(tokenize_function, batched=True)
-tokenized_test_dataset = test_dataset['test'].map(tokenize_function, batched=True)
+# Tokenize the datasets
+tokenized_train_dataset = train_dataset.map(tokenize_function, batched=True)
+tokenized_test_dataset = test_dataset.map(tokenize_function, batched=True)
 
 # Remove 'id' column after tokenization (optional)
-tokenized_train_dataset = tokenized_train_dataset.remove_columns(["id"])
-tokenized_test_dataset = tokenized_test_dataset.remove_columns(["id"])
+if "id" in tokenized_train_dataset.column_names:
+    tokenized_train_dataset = tokenized_train_dataset.remove_columns(["id"])
+if "id" in tokenized_test_dataset.column_names:
+    tokenized_test_dataset = tokenized_test_dataset.remove_columns(["id"])
 
 # Prepare the labels: Convert emotion columns to a binary vector for multi-label classification
 def process_labels(examples):
@@ -65,31 +95,39 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True)
 # Training arguments
 training_args = TrainingArguments(
     output_dir='./results-bert-topic-cls',
-    num_train_epochs=35,
+    num_train_epochs=50,
     per_device_train_batch_size=16,
-    per_device_eval_batch_size=32,
-    learning_rate=5e-7,
-    warmup_steps=100,
-    weight_decay=0.05,
+    per_device_eval_batch_size=16,
+    learning_rate=3e-5,
+    warmup_steps=200,
+    weight_decay=0.02,
     evaluation_strategy='epoch',
     logging_strategy='epoch',
-    lr_scheduler_type='constant'
+    lr_scheduler_type='constant',
+    report_to='none'
 )
 
-# Compute metrics function for multi-label classification
 def compute_metrics(p):
     predictions, labels = p
     
     # Apply sigmoid to the predictions for multi-label classification
-    predictions = torch.sigmoid(torch.tensor(predictions)) > 0.5  # Threshold at 0.5 to predict binary labels
+    probabilities = torch.sigmoid(torch.tensor(predictions))  # Convert logits to probabilities
+    
+    # Dynamically compute threshold (based on mean of probabilities)
+    dynamic_thresholds = probabilities.mean(dim=1, keepdim=True)  # Use the mean as dynamic threshold
+    
+    # Select labels above the dynamic threshold
+    selected_predictions = (probabilities > dynamic_thresholds).int()
     
     # Flatten predictions and labels to calculate metrics across all labels
-    predictions = predictions.numpy().flatten()
+    selected_predictions = selected_predictions.numpy().flatten()
     labels = labels.flatten()
     
     # Compute precision, recall, f1, and accuracy
-    precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='macro', zero_division=0)
-    acc = accuracy_score(labels, predictions)
+    # Macro-averaging :  Assessing the model's performance on all labels equally, regardless of frequency.
+    # Macro-averaging treats rare and frequent emotions equally, which is helpful if rare emotions are just as important as common ones.
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, selected_predictions, average='macro', zero_division=0)
+    acc = accuracy_score(labels, selected_predictions)
     
     return {'accuracy': acc, 'f1': f1, 'precision': precision, 'recall': recall}
 
@@ -110,37 +148,3 @@ trainer.train()
 output_dir = './bert-topic-cls'
 model.save_pretrained(output_dir)
 tokenizer.save_pretrained(output_dir)
-
-# Evaluate the model
-results = trainer.evaluate()
-
-# Predictions and confusion matrix
-predictions = trainer.predict(tokenized_test_dataset)
-preds = torch.sigmoid(torch.tensor(predictions.predictions)) > 0.5  # Threshold at 0.5 to predict binary labels
-
-# Confusion matrix and metrics
-from sklearn.metrics import confusion_matrix
-import seaborn as sns
-import matplotlib.pyplot as plt
-
-label_map = {
-    'anger': 'anger',
-    'fear': 'fear',
-    'joy': 'joy',
-    'sadness': 'sadness',
-    'surprise': 'surprise'
-}
-
-# Flatten the predictions and labels for confusion matrix
-flattened_preds = preds.numpy().flatten()
-flattened_labels = predictions.label_ids.flatten()
-
-cm = confusion_matrix(flattened_labels, flattened_preds)
-labels = [label_map[label] for label in label_map]
-
-# Plot confusion matrix
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels)
-plt.xlabel('Predicted labels')
-plt.ylabel('True labels')
-plt.title('Confusion Matrix with Label Names')
-plt.show()
