@@ -173,6 +173,7 @@ classifier = pipeline(
 )
 model.eval()
 
+
 # Example texts from your test set (replace with actual test dataset text)
 test_texts = test_dataset.select(range(3))
 #test_texts = [tokenizer.decode(x['input_ids'], skip_special_tokens=True) for x in tokenized_test_dataset.select(range(3))]
@@ -185,10 +186,41 @@ label_mapping = {
         'LABEL_4': 'surprise'
 }
 
+
 original_label = [label_mapping[id2label[i]] for i in range(len(id2label))]
 
 explainer = shap.Explainer(classifier, output_names=original_label)
 shap_values=explainer(test_texts[:3])
+
+
+
+import shap
+import matplotlib.pyplot as plt
+
+# Select the class to visualize (e.g., "joy")
+class_to_visualize = "joy"
+
+# Get the index of the class in the label mapping
+class_index = original_label.index(class_to_visualize)
+
+# Compute mean SHAP values across all examples for the selected class
+shap_values_mean = shap_values[:, :, class_index].mean(0)
+
+# Create the SHAP bar plot
+plt.figure(figsize=(8, 6))  # Set figure size
+shap.plots.bar(shap_values_mean, show=False)  # Generate bar plot without displaying
+
+# Save as an image
+file_name = f"SHAP_{class_to_visualize}_bar.png"
+plt.savefig(file_name, bbox_inches='tight', dpi=300)  # Save the figure
+
+print(f"SHAP bar chart saved as {file_name}")
+
+# Show the plot (optional)
+plt.show()
+
+# save an HTML file, the only way is to use a force plot:
+shap.save_html(f"SHAP_{class_to_visualize}_force.html", shap.plots.force(shap_values[:, :, class_index]))
 
 
 file = open('RoBERTuna_30.html','w')
