@@ -52,7 +52,7 @@ def tokenize_function(examples):
 # Tokenize the datasets
 tokenized_train_dataset = train_dataset.map(tokenize_function, batched=True)
 tokenized_test_dataset = test_dataset.map(tokenize_function, batched=True)
-
+'''
 # Remove 'id' column after tokenization (optional)
 if "id" in tokenized_train_dataset.column_names:
     tokenized_train_dataset = tokenized_train_dataset.remove_columns(["id"])
@@ -88,7 +88,7 @@ def process_labels(examples):
 # Tokenize and add labels to the datasets
 tokenized_train_dataset = tokenized_train_dataset.map(process_labels, batched=False)
 tokenized_test_dataset = tokenized_test_dataset.map(process_labels, batched=False)
-'''
+
 # Data collator for padding
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True)
 
@@ -122,7 +122,14 @@ def compute_metrics(p):
     # Flatten predictions and labels to calculate metrics across all labels
     selected_predictions = selected_predictions.numpy().flatten()
     labels = labels.flatten()
-    
+    label_mapping = {
+        0: 'anger',
+        1: 'fear',
+        2: 'joy',
+        3: 'adness',
+        4: 'urprise'
+    }
+    predicted_labels = [label_mapping[i] for i, label in enumerate(selected_predictions) if label == 1]
     # Compute precision, recall, f1, and accuracy
     # Macro-averaging :  Assessing the model's performance on all labels equally, regardless of frequency.
     # Macro-averaging treats rare and frequent emotions equally, which is helpful if rare emotions are just as important as common ones.
@@ -151,7 +158,7 @@ tokenizer.save_pretrained(output_dir)
 '''
 # Now, using transformers.pipeline for inference:
 from transformers import pipeline
-output_dir = './RoBERTa-emotion-cls'
+output_dir = './final-optuna-model'
 # Load the trained model and tokenizer
 model = XLMRobertaForSequenceClassification.from_pretrained(output_dir)
 tokenizer = XLMRobertaTokenizer.from_pretrained(output_dir)
@@ -167,17 +174,32 @@ classifier = pipeline(
 model.eval()
 
 # Example texts from your test set (replace with actual test dataset text)
-test_texts = [tokenizer.decode(x['input_ids'], skip_special_tokens=True) for x in tokenized_test_dataset.select(range(10))]
+test_texts = test_dataset.select(range(3))
+#test_texts = [tokenizer.decode(x['input_ids'], skip_special_tokens=True) for x in tokenized_test_dataset.select(range(3))]
+id2label = model.config.id2label
+label_mapping = {
+        'LABEL_0': 'anger',
+        'LABEL_1': 'fear',
+        'LABEL_2': 'joy',
+        'LABEL_3': 'sadness',
+        'LABEL_4': 'surprise'
+}
 
-# Perform predictions on test texts
-predictions = classifier(test_texts)
-explainer = shap.Explainer(classifier)
-shap_values = explainer(test_texts[:3])
+original_label = [label_mapping[id2label[i]] for i in range(len(id2label))]
 
-file = open('temp.html','w')
+explainer = shap.Explainer(classifier, output_names=original_label)
+shap_values=explainer(test_texts[:3])
+
+
+file = open('RoBERTuna_30.html','w')
 file.write(shap.plots.text(shap_values, display=False))
 file.close
-#shap.plots.text(shap_values[0])
+
+#shap_values = explainer(test_texts[:3])
+
+#file = open('RoBERTuna_30.html','w')
+#file.write(shap.plots.text(shap_values, display=False))
+#file.close
 
 # Print the predictions with the scores
 #for text, pred in zip(test_texts, predictions):
