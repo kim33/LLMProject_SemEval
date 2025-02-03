@@ -77,7 +77,7 @@ def objective(trial):
     learning_rate = trial.suggest_loguniform("learning_rate", 5e-5, 1e-4)
     dropout_rate = trial.suggest_uniform("dropout_rate", 0.1, 0.2)
     batch_size = trial.suggest_categorical("batch_size", [8, 16])
-    num_train_epochs = trial.suggest_int("num_train_epochs", 1, 2)
+    num_train_epochs = trial.suggest_int("num_train_epochs", 3, 6)
     
     # Model with trial parameters
     model = RobertaForSequenceClassification.from_pretrained(
@@ -106,7 +106,7 @@ def objective(trial):
         greater_is_better=True,  # We want to maximize the F1 score
     )
     # K-Fold Cross-Validation
-    k_folds = 2
+    k_folds = 10
     kf = KFold(n_splits=k_folds, shuffle=True, random_state=42)
     all_metrics = []
     for fold, (train_idx, val_idx) in enumerate(kf.split(tokenized_train_dataset)):

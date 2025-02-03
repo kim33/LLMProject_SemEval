@@ -76,7 +76,7 @@ def objective(trial):
     learning_rate = trial.suggest_loguniform("learning_rate", 5e-5, 1e-4)
     dropout_rate = trial.suggest_uniform("dropout_rate", 0.1, 0.2)
     batch_size = trial.suggest_categorical("batch_size", [8, 16])
-    num_train_epochs = trial.suggest_int("num_train_epochs", 1, 2)
+    num_train_epochs = trial.suggest_int("num_train_epochs", 3, 6)
     
     # Model with trial parameters
     model = RobertaForSequenceClassification.from_pretrained(
