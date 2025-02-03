@@ -6,3 +6,8 @@ accelerate
 shortuuid
 accelerate
 tensorboard
+scikit-learn
+matplotlib
+shap
+datasets
+optuna
